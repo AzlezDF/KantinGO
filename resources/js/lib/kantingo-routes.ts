@@ -24,6 +24,10 @@ import {
     updateStatus,
 } from '@/routes/staff/orders';
 import {
+    confirmCashPayment as confirmSupabaseCashPayment,
+    updateStatus as updateSupabaseOrderStatus,
+} from '@/routes/staff/supabase-orders';
+import {
     index as staffMenu,
     store as storeStaffMenu,
     update as updateStaffMenu,
@@ -58,6 +62,8 @@ export const kantingo = {
         orders: indexStaffOrders,
         status: updateStatus,
         payment: updatePayment,
+        confirmCashPayment: confirmSupabaseCashPayment,
+        supabaseOrderStatus: updateSupabaseOrderStatus,
         menu: staffMenu,
         menuStore: storeStaffMenu,
         menuUpdate: updateStaffMenu,

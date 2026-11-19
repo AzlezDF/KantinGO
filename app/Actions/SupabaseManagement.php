@@ -92,6 +92,59 @@ class SupabaseManagement
             ->post($this->endpoint('store_settings').'?on_conflict=key', $rows)->throw();
     }
 
+    /** @return array<int, array<string, mixed>> */
+    public function pendingCashPayments(): array
+    {
+        $this->ensureConfigured();
+
+        return $this->request()->get($this->endpoint('payments'), [
+            'select' => 'id,order_id,method,status,amount,created_at,order:orders!payments_order_id_fkey(id,order_number,status,fulfillment_method,location_block,location_room,location_note,created_at,customer:profiles!orders_user_id_fkey(name,nis,class_name),items:order_items(product_name,quantity))',
+            'method' => 'eq.cash',
+            'status' => 'eq.unpaid',
+            'order' => 'created_at.desc',
+            'limit' => 100,
+        ])->throw()->json();
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public function activeOrders(): array
+    {
+        $this->ensureConfigured();
+
+        return $this->request()->get($this->endpoint('orders'), [
+            'select' => 'id,order_number,status,fulfillment_method,total,created_at,location_block,location_room,location_note,order_note,customer:profiles!orders_user_id_fkey(name,nis,class_name),items:order_items(id,product_name,quantity),payment:payments!inner(method,status,amount)',
+            'status' => 'not.in.(completed,rejected)',
+            'payment.method' => 'eq.cash',
+            'order' => 'created_at.asc',
+            'limit' => 100,
+        ])->throw()->json();
+    }
+
+    public function transitionOrderStatus(string $orderId, string $status, ?string $note, string $staffName): void
+    {
+        $this->ensureConfigured();
+
+        $this->request()->post($this->endpoint('rpc/staff_transition_order_status'), [
+            'p_order_id' => $orderId,
+            'p_status' => $status,
+            'p_note' => $note,
+            'p_staff_name' => $staffName,
+        ])->throw();
+    }
+
+    public function confirmCashPayment(string $orderId): bool
+    {
+        $this->ensureConfigured();
+
+        $response = $this->request()->withHeaders(['Prefer' => 'return=representation'])
+            ->patch($this->endpoint('payments').'?order_id=eq.'.rawurlencode($orderId).'&method=eq.cash&status=eq.unpaid', [
+                'status' => 'paid',
+                'verified_at' => now()->toIso8601String(),
+            ])->throw();
+
+        return count($response->json() ?? []) === 1;
+    }
+
     private function uploadProductImage(UploadedFile $image): string
     {
         $path = Str::uuid().'.'.$image->guessExtension();

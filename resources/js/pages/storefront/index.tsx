@@ -16,9 +16,11 @@ import { supabase } from '@/lib/supabase';
 import {
     addProductToCart,
     loadCatalog,
+    loadMyOrders,
     loadStoreSettings,
     productImageUrl,
     type Category,
+    type CustomerOrder,
     type Product,
 } from '@/services/supabase-store';
 import { show as cartRoute } from '@/routes/cart';
@@ -45,6 +47,7 @@ export default function Storefront() {
     const [cartCount, setCartCount] = useState(0);
     const [isOpen, setIsOpen] = useState(true);
     const [operatingHours, setOperatingHours] = useState('07:00–15:30');
+    const [activeOrder, setActiveOrder] = useState<CustomerOrder | null>(null);
 
     useEffect(() => {
         void Promise.all([loadCatalog(), loadStoreSettings()])
@@ -95,8 +98,36 @@ export default function Storefront() {
                 },
             )
             .subscribe();
+        let orderChannel: ReturnType<typeof supabase.channel> | null = null;
         void supabase.auth.getUser().then(({ data }) => {
             if (data.user) {
+                const refreshActiveOrder = () => {
+                    void loadMyOrders()
+                        .then((orders) => {
+                            setActiveOrder(
+                                orders.find(
+                                    (order) => !['completed', 'rejected'].includes(order.status),
+                                ) ?? null,
+                            );
+                        })
+                        .catch(() => undefined);
+                };
+
+                refreshActiveOrder();
+                orderChannel = supabase
+                    .channel(`student-dashboard-orders-${data.user.id}`)
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: '*',
+                            schema: 'public',
+                            table: 'orders',
+                            filter: `user_id=eq.${data.user.id}`,
+                        },
+                        refreshActiveOrder,
+                    )
+                    .subscribe();
+
                 void supabase
                     .from('carts')
                     .select('cart_items(quantity)')
@@ -114,6 +145,9 @@ export default function Storefront() {
         });
         return () => {
             void supabase.removeChannel(settingsChannel);
+            if (orderChannel) {
+                void supabase.removeChannel(orderChannel);
+            }
         };
     }, []);
 
@@ -327,6 +361,24 @@ export default function Storefront() {
                             </div>
                         </div>
                     </section>
+                    {activeOrder && (
+                        <section className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F0D1C4] bg-[#FFF5F0] p-4 dark:border-[#E34B1B]/30 dark:bg-[#E34B1B]/10 sm:px-6">
+                            <div>
+                                <p className="text-[10px] font-extrabold tracking-[.14em] text-[#E34B1B]">PESANAN SEDANG DIPROSES</p>
+                                <p className="mt-1 text-sm font-black">
+                                    {activeOrder.order_number} · {activeOrder.status === 'awaiting_confirmation' ? 'Menunggu konfirmasi' : activeOrder.status === 'accepted' ? 'Pesanan diterima' : activeOrder.status === 'preparing' ? 'Sedang dibuat' : activeOrder.status === 'ready_for_delivery' ? 'Siap diantar' : activeOrder.status === 'delivering' ? 'Sedang diantar' : activeOrder.status === 'ready_for_pickup' ? 'Siap diambil di kantin' : activeOrder.status}
+                                </p>
+                                <p className="mt-1 text-xs text-[#85877D]">
+                                    {activeOrder.fulfillment_method === 'delivery'
+                                        ? `Diantar ke ${activeOrder.location_block ?? 'lokasi'} · ${activeOrder.location_room ?? ''}`
+                                        : 'Ambil sendiri di kantin'}
+                                </p>
+                            </div>
+                            <Link href={ordersRoute.url()} className="rounded-xl bg-[#E34B1B] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#C93D14]">
+                                Lihat progres pesanan
+                            </Link>
+                        </section>
+                    )}
                     <section id="menu" className="mt-10 scroll-mt-24">
                         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
                             <div>

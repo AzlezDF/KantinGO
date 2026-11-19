@@ -37,7 +37,13 @@ Route::middleware('auth')->group(function (): void {
     Route::middleware('can:manage-orders')->prefix('staff')->name('staff.')->group(function (): void {
         Route::get('orders', [StaffOrderController::class, 'index'])->name('orders.index');
         Route::patch('orders/{order}/status', [StaffOrderController::class, 'update'])->name('orders.update-status');
+        Route::patch('supabase-orders/{orderId}/status', [StaffOrderController::class, 'updateSupabase'])
+            ->whereUuid('orderId')
+            ->name('supabase-orders.update-status');
         Route::patch('orders/{order}/payment', [StaffPaymentController::class, 'update'])->name('orders.update-payment');
+        Route::patch('supabase-orders/{orderId}/cash-payment', [StaffPaymentController::class, 'confirmSupabaseCash'])
+            ->whereUuid('orderId')
+            ->name('supabase-orders.confirm-cash-payment');
         Route::get('menu', [StaffMenuController::class, 'index'])->name('menu.index');
         Route::post('menu', [StaffMenuController::class, 'store'])->name('menu.store');
         Route::patch('menu/{product}', [StaffMenuController::class, 'update'])->name('menu.update');

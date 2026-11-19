@@ -1,5 +1,6 @@
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePoll } from '@inertiajs/react';
 import {
+    Banknote,
     Bike,
     Check,
     Clock3,
@@ -7,6 +8,8 @@ import {
     PackageCheck,
     ShoppingBag,
 } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { kantingo } from '../../lib/kantingo-routes';
 import StaffAccountActions from '../../components/staff-account-actions';
 
@@ -34,7 +37,42 @@ type Order = {
     items: { id: number; product_name: string; quantity: number }[];
     payment: { method: string; status: string };
 };
-type Props = { orders: Order[] };
+type SupabaseCashPayment = {
+    order_id: string;
+    amount: number;
+    created_at: string;
+    order: {
+        order_number: string;
+        fulfillment_method: 'delivery' | 'pickup';
+        location_block: string | null;
+        location_room: string | null;
+        location_note: string | null;
+        customer: { name: string; nis: string | null; class_name: string | null } | null;
+        items: { product_name: string; quantity: number }[];
+    } | null;
+};
+type SupabaseOnlineOrder = {
+    id: string;
+    order_number: string;
+    status: Status;
+    fulfillment_method: 'delivery' | 'pickup';
+    location_block: string | null;
+    location_room: string | null;
+    location_note: string | null;
+    order_note: string | null;
+    total: number;
+    created_at: string;
+    customer: { name: string; nis: string | null; class_name: string | null } | null;
+    items: { id: string; product_name: string; quantity: number }[];
+    payment: { method: string; status: string; amount: number } | null;
+};
+type Props = {
+    orders: Order[];
+    pendingCashPayments: SupabaseCashPayment[];
+    cashPaymentsError: string | null;
+    supabaseOrders: SupabaseOnlineOrder[];
+    supabaseOrdersError: string | null;
+};
 const rupiah = (value: number) =>
     new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -79,7 +117,45 @@ function next(order: Order): { value: Status; label: string } | null {
     return transitions[order.status];
 }
 
-export default function StaffOrders({ orders }: Props) {
+function nextOnlineOrder(order: SupabaseOnlineOrder): { value: Status; label: string } | null {
+    if (order.status === 'awaiting_confirmation') {
+        return { value: 'accepted', label: 'Terima pesanan' };
+    }
+
+    if (order.status === 'accepted') {
+        return { value: 'preparing', label: 'Mulai membuat pesanan' };
+    }
+
+    if (order.status === 'preparing') {
+        return order.fulfillment_method === 'delivery'
+            ? { value: 'ready_for_delivery', label: 'Pesanan siap diantar' }
+            : { value: 'ready_for_pickup', label: 'Pesanan siap diambil' };
+    }
+
+    if (order.status === 'ready_for_delivery') {
+        return { value: 'delivering', label: 'Mulai antar pesanan' };
+    }
+
+    if (order.status === 'delivering' || order.status === 'ready_for_pickup') {
+        return { value: 'completed', label: 'Selesaikan pesanan' };
+    }
+
+    return null;
+}
+
+export default function StaffOrders({
+    orders,
+    pendingCashPayments,
+    cashPaymentsError,
+    supabaseOrders,
+    supabaseOrdersError,
+}: Props) {
+    usePoll(4000, {
+        only: ['pendingCashPayments', 'cashPaymentsError', 'supabaseOrders', 'supabaseOrdersError'],
+    });
+    const [confirmingCashOrderId, setConfirmingCashOrderId] = useState<string | null>(null);
+    const [confirmingLocalCashOrderId, setConfirmingLocalCashOrderId] = useState<number | null>(null);
+    const [updatingOnlineOrderId, setUpdatingOnlineOrderId] = useState<string | null>(null);
     const pending = orders.filter(
         (order) => order.status === 'awaiting_confirmation',
     ).length;
@@ -109,6 +185,65 @@ export default function StaffOrders({ orders }: Props) {
             status: 'rejected',
             note: reason.trim(),
         });
+    }
+
+    function confirmOnlineCashPayment(payment: SupabaseCashPayment): void {
+        const orderNumber = payment.order?.order_number ?? payment.order_id;
+        if (!window.confirm(`Konfirmasi bahwa pembayaran tunai pesanan ${orderNumber} sudah diterima?`)) {
+            return;
+        }
+
+        setConfirmingCashOrderId(payment.order_id);
+        router.patch(
+            kantingo.staff.confirmCashPayment.url({ orderId: payment.order_id }),
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () => toast.success('Pembayaran tunai berhasil dikonfirmasi.'),
+                onError: (errors) => toast.error(Object.values(errors)[0] ?? 'Pembayaran gagal dikonfirmasi.'),
+                onFinish: () => setConfirmingCashOrderId(null),
+            },
+        );
+    }
+
+    function updateOnlineOrder(order: SupabaseOnlineOrder, status: Status): void {
+        const note = status === 'rejected'
+            ? window.prompt('Tuliskan alasan penolakan pesanan:')?.trim()
+            : undefined;
+
+        if (status === 'rejected' && !note) {
+            return;
+        }
+
+        setUpdatingOnlineOrderId(order.id);
+        router.patch(
+            kantingo.staff.supabaseOrderStatus.url({ orderId: order.id }),
+            { status, note },
+            {
+                preserveScroll: true,
+                onSuccess: () => toast.success(`Status pesanan ${order.order_number} diperbarui.`),
+                onError: (errors) => toast.error(Object.values(errors)[0] ?? 'Status pesanan gagal diperbarui.'),
+                onFinish: () => setUpdatingOnlineOrderId(null),
+            },
+        );
+    }
+
+    function confirmLocalCashPayment(order: Order): void {
+        if (!window.confirm(`Konfirmasi pembayaran tunai pesanan ${order.order_number} sudah diterima?`)) {
+            return;
+        }
+
+        setConfirmingLocalCashOrderId(order.id);
+        router.patch(
+            kantingo.staff.payment.url(order.id),
+            { status: 'paid' },
+            {
+                preserveScroll: true,
+                onSuccess: () => toast.success('Pembayaran tunai berhasil dikonfirmasi.'),
+                onError: (errors) => toast.error(Object.values(errors)[0] ?? 'Pembayaran gagal dikonfirmasi.'),
+                onFinish: () => setConfirmingLocalCashOrderId(null),
+            },
+        );
     }
 
     return (
@@ -177,6 +312,111 @@ export default function StaffOrders({ orders }: Props) {
                                 </div>
                             </article>
                         ))}
+                    </section>
+                    <section className="mt-6 overflow-hidden rounded-2xl border border-[#EAE7DF] bg-white dark:border-white/10 dark:bg-white/5">
+                        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0EEE8] px-5 py-4 dark:border-white/10">
+                            <div>
+                                <h2 className="font-black">Pesanan tunai online</h2>
+                                <p className="mt-0.5 text-xs text-[#85877D]">
+                                    Pesanan tunai baru masuk otomatis. Alur status menyesuaikan pilihan antar atau ambil sendiri.
+                                </p>
+                            </div>
+                            <span className="rounded-lg bg-[#F6EEDC] px-3 py-1.5 text-[10px] font-bold text-[#8A6520]">
+                                {supabaseOrders.length} pesanan aktif
+                            </span>
+                        </header>
+                        {supabaseOrdersError ? (
+                            <p className="p-5 text-sm text-[#D83D32]">{supabaseOrdersError}</p>
+                        ) : supabaseOrders.length === 0 ? (
+                            <p className="px-5 py-8 text-center text-sm text-[#85877D]">
+                                Tidak ada pesanan online yang sedang diproses.
+                            </p>
+                        ) : (
+                            <div className="grid gap-3 p-4 sm:p-5 xl:grid-cols-2">
+                                {supabaseOrders.map((order) => {
+                                    const action = nextOnlineOrder(order);
+                                    const customer = order.customer;
+
+                                    return (
+                                        <article key={order.id} className="overflow-hidden rounded-xl border border-[#EAE7DF] p-4 dark:border-white/10">
+                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="font-mono text-[10px] font-semibold text-[#85877D]">{order.order_number}</p>
+                                                    <h3 className="mt-1 text-sm font-extrabold">{customer?.name ?? 'Siswa'}</h3>
+                                                    <p className="mt-0.5 text-xs text-[#85877D]">
+                                                        NIS {customer?.nis ?? '—'} · {customer?.class_name ?? 'Kelas belum diisi'}
+                                                    </p>
+                                                </div>
+                                                <span className="rounded-full bg-[#F6EEDC] px-3 py-1.5 text-[10px] font-bold text-[#8A6520]">
+                                                    {statusLabels[order.status]}
+                                                </span>
+                                            </div>
+                                            {order.fulfillment_method === 'delivery' ? (
+                                                <div className="mt-3 rounded-xl border border-[#D9E3D2] bg-[#EEF1E7] p-3 dark:border-white/10 dark:bg-[#397A4B]/10">
+                                                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[.1em] text-[#397A4B]">
+                                                        <MapPin className="size-3.5" /> LOKASI ANTAR
+                                                    </p>
+                                                    <p className="mt-1 text-sm font-black">
+                                                        {order.location_block?.toUpperCase() ?? 'LOKASI LAIN'} / {order.location_room ?? 'Belum diisi'}
+                                                    </p>
+                                                    {order.location_note && <p className="mt-1 text-xs text-[#65695f] dark:text-white/65">{order.location_note}</p>}
+                                                </div>
+                                            ) : (
+                                                <p className="mt-3 rounded-xl bg-[#F6EEDC] p-3 text-xs font-bold text-[#8A6520]">Ambil sendiri di kantin</p>
+                                            )}
+                                            <p className="mt-3 text-xs font-semibold leading-5">
+                                                {order.items.map((item) => `${item.quantity}× ${item.product_name}`).join(' · ')}
+                                            </p>
+                                            {order.order_note && <p className="mt-1 text-xs text-[#85877D]">Catatan: {order.order_note}</p>}
+                                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0EEE8] pt-3 text-xs dark:border-white/10">
+                                                <span className="text-[#85877D]">{order.payment?.method.toUpperCase() ?? 'Pembayaran'} · {order.payment?.status.replaceAll('_', ' ') ?? 'Status tidak tersedia'}</span>
+                                                <b>{rupiah(order.total)}</b>
+                                            </div>
+                                            <p className="mt-2 text-[10px] text-[#85877D]">{new Date(order.created_at).toLocaleString('id-ID')}</p>
+                                            <div className="mt-3 grid gap-2">
+                                                {action && (
+                                                    <button
+                                                        disabled={updatingOnlineOrderId === order.id}
+                                                        onClick={() => updateOnlineOrder(order, action.value)}
+                                                        className="w-full rounded-xl bg-[#E34B1B] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#C93D14] disabled:cursor-wait disabled:opacity-60"
+                                                    >
+                                                        {updatingOnlineOrderId === order.id ? 'Memperbarui status…' : action.label}
+                                                    </button>
+                                                )}
+                                                {order.status === 'awaiting_confirmation' && (
+                                                    <button
+                                                        disabled={updatingOnlineOrderId === order.id}
+                                                        onClick={() => updateOnlineOrder(order, 'rejected')}
+                                                        className="w-full rounded-xl border border-[#D83D32]/25 px-4 py-2.5 text-xs font-bold text-[#D83D32] hover:bg-[#FCECE6] disabled:opacity-60"
+                                                    >
+                                                        Tolak pesanan
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+                    <section className="mt-6 overflow-hidden rounded-2xl border border-[#EAE7DF] bg-white dark:border-white/10 dark:bg-white/5">
+                        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0EEE8] px-5 py-4 dark:border-white/10">
+                            <div className="flex items-center gap-3">
+                                <span className="grid size-10 place-items-center rounded-xl bg-[#EEF1E7] text-[#397A4B]"><Banknote className="size-5" /></span>
+                                <div><h2 className="font-black">Konfirmasi pembayaran tunai online</h2><p className="mt-0.5 text-xs text-[#85877D]">Pesanan siswa dari Supabase yang masih menunggu pembayaran.</p></div>
+                            </div>
+                            <span className="rounded-lg bg-[#F6EEDC] px-3 py-1.5 text-[10px] font-bold text-[#8A6520]">{pendingCashPayments.length} menunggu</span>
+                        </header>
+                        {cashPaymentsError ? <p className="p-5 text-sm text-[#D83D32]">{cashPaymentsError}</p> : pendingCashPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-[#85877D]">Tidak ada pembayaran tunai online yang menunggu konfirmasi.</p> : <div className="grid gap-3 p-4 sm:p-5 xl:grid-cols-2">{pendingCashPayments.map((payment) => {
+                            const order = payment.order;
+                            const customer = order?.customer;
+                            return <article key={payment.order_id} className="rounded-xl border border-[#EAE7DF] p-4 dark:border-white/10">
+                                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-mono text-[10px] font-semibold text-[#85877D]">{order?.order_number ?? payment.order_id}</p><h3 className="mt-1 text-sm font-extrabold">{customer?.name ?? 'Siswa'}</h3><p className="mt-0.5 text-xs text-[#85877D]">NIS {customer?.nis ?? '—'} · {customer?.class_name ?? 'Kelas belum diisi'}</p></div><b className="text-sm text-[#397A4B]">{rupiah(payment.amount)}</b></div>
+                                {order?.items?.length ? <p className="mt-3 text-xs font-semibold leading-5">{order.items.map((item) => `${item.quantity}× ${item.product_name}`).join(' · ')}</p> : null}
+                                {order?.fulfillment_method === 'delivery' ? <p className="mt-2 text-xs text-[#85877D]">Lokasi: {order.location_block ?? '—'} / {order.location_room ?? '—'}{order.location_note ? ` · ${order.location_note}` : ''}</p> : <p className="mt-2 text-xs text-[#85877D]">Ambil sendiri di kantin</p>}
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F0EEE8] pt-3 dark:border-white/10"><span className="text-[10px] text-[#85877D]">{new Date(payment.created_at).toLocaleString('id-ID')} · Tunai belum dibayar</span><button disabled={confirmingCashOrderId === payment.order_id} onClick={() => confirmOnlineCashPayment(payment)} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#397A4B] px-3 text-xs font-bold text-white transition hover:bg-[#2e673e] disabled:cursor-wait disabled:opacity-60"><Check className="size-3.5" />{confirmingCashOrderId === payment.order_id ? 'Menyimpan…' : 'Konfirmasi tunai'}</button></div>
+                            </article>;
+                        })}</div>}
                     </section>
                     <div className="mt-8 flex items-end justify-between gap-3">
                         <div>
@@ -275,6 +515,15 @@ export default function StaffOrders({ orders }: Props) {
                                         </b>
                                     </div>
                                     <div className="grid gap-2 px-5 pb-5">
+                                        {order.payment.method === 'cash' && order.payment.status === 'unpaid' && (
+                                            <button
+                                                disabled={confirmingLocalCashOrderId === order.id}
+                                                onClick={() => confirmLocalCashPayment(order)}
+                                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#397A4B] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#2e673e] disabled:cursor-wait disabled:opacity-60"
+                                            >
+                                                <Check className="size-4" />{confirmingLocalCashOrderId === order.id ? 'Menyimpan…' : 'Konfirmasi pembayaran tunai'}
+                                            </button>
+                                        )}
                                         {order.payment.status ===
                                             'awaiting_verification' && (
                                             <div className="grid grid-cols-2 gap-2">
