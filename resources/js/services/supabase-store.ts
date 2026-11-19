@@ -1,6 +1,11 @@
 import { supabase } from '@/lib/supabase';
 
-export type Category = { id: string; name: string; slug: string; icon_name: string | null };
+export type Category = {
+    id: string;
+    name: string;
+    slug: string;
+    icon_name: string | null;
+};
 export type Product = {
     id: string;
     name: string;
@@ -42,15 +47,26 @@ function firstRelated<T>(value: T | T[] | null): T | null {
 }
 
 export function productImageUrl(path: string | null): string | null {
-    return path ? supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl : null;
+    return path
+        ? supabase.storage.from('product-images').getPublicUrl(path).data
+              .publicUrl
+        : null;
 }
 
-export async function loadCatalog(): Promise<{ categories: Category[]; products: Product[] }> {
+export async function loadCatalog(): Promise<{
+    categories: Category[];
+    products: Product[];
+}> {
     const [categoriesResult, productsResult] = await Promise.all([
-        supabase.from('categories').select('id, name, slug, icon_name').order('name'),
+        supabase
+            .from('categories')
+            .select('id, name, slug, icon_name')
+            .order('name'),
         supabase
             .from('products')
-            .select('id, name, description, price, stock, image_path, sold_count, category:categories(id, name, slug, icon_name)')
+            .select(
+                'id, name, description, price, stock, image_path, sold_count, category:categories(id, name, slug, icon_name)',
+            )
             .eq('is_available', true)
             .order('sold_count', { ascending: false }),
     ]);
@@ -81,14 +97,22 @@ async function currentUserId(): Promise<string> {
 
 async function getOrCreateCartId(): Promise<string> {
     const userId = await currentUserId();
-    const existing = await supabase.from('carts').select('id').eq('user_id', userId).maybeSingle();
+    const existing = await supabase
+        .from('carts')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
     assertNoError(existing.error);
 
     if (existing.data) {
         return existing.data.id;
     }
 
-    const created = await supabase.from('carts').insert({ user_id: userId }).select('id').single();
+    const created = await supabase
+        .from('carts')
+        .insert({ user_id: userId })
+        .select('id')
+        .single();
     assertNoError(created.error);
 
     if (!created.data) {
@@ -118,8 +142,13 @@ export async function addProductToCart(product: Product): Promise<void> {
     }
 
     const result = existing.data
-        ? await supabase.from('cart_items').update({ quantity }).eq('id', existing.data.id)
-        : await supabase.from('cart_items').insert({ cart_id: cartId, product_id: product.id, quantity });
+        ? await supabase
+              .from('cart_items')
+              .update({ quantity })
+              .eq('id', existing.data.id)
+        : await supabase
+              .from('cart_items')
+              .insert({ cart_id: cartId, product_id: product.id, quantity });
     assertNoError(result.error);
 }
 
@@ -127,7 +156,9 @@ export async function loadCart(): Promise<CartItem[]> {
     const cartId = await getOrCreateCartId();
     const result = await supabase
         .from('cart_items')
-        .select('id, quantity, product:products(id, name, description, price, stock, image_path, sold_count, category:categories(id, name, slug, icon_name))')
+        .select(
+            'id, quantity, product:products(id, name, description, price, stock, image_path, sold_count, category:categories(id, name, slug, icon_name))',
+        )
         .eq('cart_id', cartId)
         .order('created_at');
     assertNoError(result.error);
@@ -136,11 +167,16 @@ export async function loadCart(): Promise<CartItem[]> {
         const product = firstRelated(item.product);
         const category = product ? firstRelated(product.category) : null;
 
-        return product && category ? [{ ...item, product: { ...product, category } } as CartItem] : [];
+        return product && category
+            ? [{ ...item, product: { ...product, category } } as CartItem]
+            : [];
     });
 }
 
-export async function setCartItemQuantity(item: CartItem, quantity: number): Promise<void> {
+export async function setCartItemQuantity(
+    item: CartItem,
+    quantity: number,
+): Promise<void> {
     if (quantity < 1) {
         await removeCartItem(item.id);
         return;
@@ -150,12 +186,18 @@ export async function setCartItemQuantity(item: CartItem, quantity: number): Pro
         throw new Error('Jumlah pesanan melebihi stok terbaru.');
     }
 
-    const result = await supabase.from('cart_items').update({ quantity }).eq('id', item.id);
+    const result = await supabase
+        .from('cart_items')
+        .update({ quantity })
+        .eq('id', item.id);
     assertNoError(result.error);
 }
 
 export async function removeCartItem(cartItemId: string): Promise<void> {
-    const result = await supabase.from('cart_items').delete().eq('id', cartItemId);
+    const result = await supabase
+        .from('cart_items')
+        .delete()
+        .eq('id', cartItemId);
     assertNoError(result.error);
 }
 
@@ -182,33 +224,64 @@ export async function checkoutCart(input: {
     return result.data;
 }
 
-export async function uploadPaymentProof(orderId: string, file: File): Promise<void> {
+export async function uploadPaymentProof(
+    orderId: string,
+    file: File,
+): Promise<void> {
     const userId = await currentUserId();
     const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const path = `${userId}/${orderId}.${extension}`;
-    const upload = await supabase.storage.from('payment-proofs').upload(path, file, { upsert: true, contentType: file.type });
+    const upload = await supabase.storage
+        .from('payment-proofs')
+        .upload(path, file, { upsert: true, contentType: file.type });
     assertNoError(upload.error);
 
-    const linked = await supabase.rpc('attach_payment_proof', { p_order_id: orderId, p_proof_path: path });
+    const linked = await supabase.rpc('attach_payment_proof', {
+        p_order_id: orderId,
+        p_proof_path: path,
+    });
     assertNoError(linked.error);
 }
 
-export async function loadStoreSettings(): Promise<{ isOpen: boolean; openingTime: string; closingTime: string; qrisImageUrl: string | null }> {
-    const settings = await supabase.from('store_settings').select('key, value').in('key', ['is_open', 'opening_time', 'closing_time', 'qris_image_path']);
+export async function loadStoreSettings(): Promise<{
+    isOpen: boolean;
+    openingTime: string;
+    closingTime: string;
+    qrisImageUrl: string | null;
+}> {
+    const settings = await supabase
+        .from('store_settings')
+        .select('key, value')
+        .in('key', [
+            'is_open',
+            'opening_time',
+            'closing_time',
+            'qris_image_path',
+        ]);
     assertNoError(settings.error);
-    const values = new Map((settings.data ?? []).map((setting) => [setting.key, setting.value]));
+    const values = new Map(
+        (settings.data ?? []).map((setting) => [setting.key, setting.value]),
+    );
     const qrisPath = values.get('qris_image_path');
 
     if (typeof qrisPath !== 'string') {
         return {
             isOpen: values.get('is_open') !== false,
-            openingTime: typeof values.get('opening_time') === 'string' ? values.get('opening_time') : '07:00',
-            closingTime: typeof values.get('closing_time') === 'string' ? values.get('closing_time') : '15:30',
+            openingTime:
+                typeof values.get('opening_time') === 'string'
+                    ? values.get('opening_time')
+                    : '07:00',
+            closingTime:
+                typeof values.get('closing_time') === 'string'
+                    ? values.get('closing_time')
+                    : '15:30',
             qrisImageUrl: null,
         };
     }
 
-    const signed = await supabase.storage.from('qris').createSignedUrl(qrisPath, 300);
+    const signed = await supabase.storage
+        .from('qris')
+        .createSignedUrl(qrisPath, 300);
     assertNoError(signed.error);
 
     if (!signed.data) {
@@ -217,8 +290,14 @@ export async function loadStoreSettings(): Promise<{ isOpen: boolean; openingTim
 
     return {
         isOpen: values.get('is_open') !== false,
-        openingTime: typeof values.get('opening_time') === 'string' ? values.get('opening_time') : '07:00',
-        closingTime: typeof values.get('closing_time') === 'string' ? values.get('closing_time') : '15:30',
+        openingTime:
+            typeof values.get('opening_time') === 'string'
+                ? values.get('opening_time')
+                : '07:00',
+        closingTime:
+            typeof values.get('closing_time') === 'string'
+                ? values.get('closing_time')
+                : '15:30',
         qrisImageUrl: signed.data.signedUrl,
     };
 }
@@ -226,13 +305,18 @@ export async function loadStoreSettings(): Promise<{ isOpen: boolean; openingTim
 export async function loadMyOrders(): Promise<CustomerOrder[]> {
     const result = await supabase
         .from('orders')
-        .select('id, order_number, status, fulfillment_method, total, created_at, location_block, location_room, items:order_items(id, product_name, quantity), payment:payments(method, status)')
+        .select(
+            'id, order_number, status, fulfillment_method, total, created_at, location_block, location_room, items:order_items(id, product_name, quantity), payment:payments(method, status)',
+        )
         .order('created_at', { ascending: false });
     assertNoError(result.error);
 
-    return (result.data ?? []).map((order) => ({
-        ...order,
-        items: order.items ?? [],
-        payment: firstRelated(order.payment),
-    } as CustomerOrder));
+    return (result.data ?? []).map(
+        (order) =>
+            ({
+                ...order,
+                items: order.items ?? [],
+                payment: firstRelated(order.payment),
+            }) as CustomerOrder,
+    );
 }

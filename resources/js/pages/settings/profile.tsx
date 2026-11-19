@@ -24,15 +24,21 @@ export default function Profile() {
 
     async function synchronizeStudentProfile(): Promise<void> {
         try {
-            const { data: authData, error: authError } = await supabase.auth.getUser();
+            const { data: authData, error: authError } =
+                await supabase.auth.getUser();
 
             if (authError || !authData.user) {
-                throw new Error('Sesi Supabase belum aktif. Keluar lalu masuk kembali sebelum mengubah profil.');
+                throw new Error(
+                    'Sesi Supabase belum aktif. Keluar lalu masuk kembali sebelum mengubah profil.',
+                );
             }
 
             const { data, error } = await supabase
                 .from('profiles')
-                .update({ name: form.data.name.trim(), class_name: form.data.class_name.trim() || null })
+                .update({
+                    name: form.data.name.trim(),
+                    class_name: form.data.class_name.trim() || null,
+                })
                 .eq('id', authData.user.id)
                 .select('id')
                 .maybeSingle();
@@ -42,13 +48,20 @@ export default function Profile() {
             }
 
             if (!data) {
-                throw new Error('Profil Supabase tidak ditemukan atau tidak dapat diubah.');
+                throw new Error(
+                    'Profil Supabase tidak ditemukan atau tidak dapat diubah.',
+                );
             }
 
             toast.success('Profil siswa berhasil diperbarui.');
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Terjadi kesalahan saat menyelaraskan profil.';
-            toast.error(`Data Laravel tersimpan, tetapi profil pemesanan belum tersinkron: ${message}`);
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Terjadi kesalahan saat menyelaraskan profil.';
+            toast.error(
+                `Data Laravel tersimpan, tetapi profil pemesanan belum tersinkron: ${message}`,
+            );
         }
     }
 
@@ -82,7 +95,9 @@ export default function Profile() {
                             <Input
                                 id="name"
                                 value={form.data.name}
-                                onChange={(event) => form.setData('name', event.target.value)}
+                                onChange={(event) =>
+                                    form.setData('name', event.target.value)
+                                }
                                 required
                                 autoComplete="name"
                                 placeholder="Masukkan nama lengkap"
@@ -94,21 +109,41 @@ export default function Profile() {
                             <>
                                 <div className="grid gap-2">
                                     <Label htmlFor="nis">NIS</Label>
-                                    <Input id="nis" value={auth.user.nis ?? ''} readOnly aria-readonly className="bg-muted" />
-                                    <p className="text-xs text-muted-foreground">NIS digunakan untuk masuk dan tidak dapat diubah dari halaman profil.</p>
+                                    <Input
+                                        id="nis"
+                                        value={auth.user.nis ?? ''}
+                                        readOnly
+                                        aria-readonly
+                                        className="bg-muted"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        NIS digunakan untuk masuk dan tidak
+                                        dapat diubah dari halaman profil.
+                                    </p>
                                 </div>
                                 <div className="grid gap-2">
                                     <Label htmlFor="class_name">Kelas</Label>
                                     <Input
                                         id="class_name"
                                         value={form.data.class_name}
-                                        onChange={(event) => form.setData('class_name', event.target.value)}
+                                        onChange={(event) =>
+                                            form.setData(
+                                                'class_name',
+                                                event.target.value,
+                                            )
+                                        }
                                         maxLength={80}
                                         placeholder="Contoh: XI TKJ 2"
                                     />
-                                    <InputError message={form.errors.class_name} />
+                                    <InputError
+                                        message={form.errors.class_name}
+                                    />
                                 </div>
-                                <input type="hidden" name="email" value={form.data.email} />
+                                <input
+                                    type="hidden"
+                                    name="email"
+                                    value={form.data.email}
+                                />
                             </>
                         )}
 
@@ -119,7 +154,12 @@ export default function Profile() {
                                     id="email"
                                     type="email"
                                     value={form.data.email}
-                                    onChange={(event) => form.setData('email', event.target.value)}
+                                    onChange={(event) =>
+                                        form.setData(
+                                            'email',
+                                            event.target.value,
+                                        )
+                                    }
                                     required
                                     autoComplete="email"
                                     placeholder="Alamat email"
@@ -129,7 +169,9 @@ export default function Profile() {
                         )}
 
                         <Button type="submit" disabled={form.processing}>
-                            {form.processing ? 'Menyimpan…' : 'Simpan perubahan'}
+                            {form.processing
+                                ? 'Menyimpan…'
+                                : 'Simpan perubahan'}
                         </Button>
                     </form>
                 </div>
