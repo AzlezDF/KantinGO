@@ -27,15 +27,14 @@ FROM dependencies AS frontend
 
 COPY --from=node:22-bookworm-slim /usr/local /usr/local
 
-ARG VITE_APP_NAME
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ARG VITE_APP_NAME=KantinGO
+ARG VITE_SUPABASE_URL=https://blsciardiipvbmvparmy.supabase.co
+ARG VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_bL3k2qUm2zZl9EGvA5cK9g_7yGqCB0b
 
 ENV VITE_APP_NAME=${VITE_APP_NAME} \
     VITE_SUPABASE_URL=${VITE_SUPABASE_URL} \
     VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY} \
-    APP_ENV=production \
-    APP_KEY=base64:Q0QEeumFg9iq+J+7bMvyqJnYSnQVUP4Tbs0lWWoQJbo=
+    APP_ENV=production
 
 COPY package.json package-lock.json ./
 
