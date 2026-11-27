@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { kantingo } from '../../lib/kantingo-routes';
 
-type Props = {
+type DashboardData = {
     stats: {
         salesToday: number;
         ordersToday: number;
@@ -17,13 +17,14 @@ type Props = {
         processing: number;
     };
     popularProducts: {
-        id: number;
+        id: string;
         name: string;
         sold_count: number;
         stock: number;
     }[];
     salesByDay: { label: string; total: number }[];
 };
+type Props = DashboardData | { loadError: string };
 const rupiah = (value: number) =>
     new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -31,11 +32,34 @@ const rupiah = (value: number) =>
         maximumFractionDigits: 0,
     }).format(value);
 
-export default function AdminDashboard({
-    stats,
-    popularProducts,
-    salesByDay,
-}: Props) {
+export default function AdminDashboard(props: Props) {
+    if ('loadError' in props) {
+        return (
+            <>
+                <Head title="Dashboard Admin — KantinGO" />
+                <main className="min-h-screen bg-[#FAF9F5] px-4 py-8 text-[#252920] sm:px-7 dark:bg-[#171a16] dark:text-[#f6f5ef]">
+                    <div className="mx-auto flex max-w-[1250px] flex-col gap-6">
+                        <header>
+                            <p className="text-[10px] font-extrabold tracking-[.18em] text-[#E34B1B]">
+                                PUSAT KENDALI KANTINGO
+                            </p>
+                            <h1 className="mt-1 text-3xl font-black tracking-[-.04em]">
+                                Dashboard admin
+                            </h1>
+                        </header>
+                        <section
+                            role="alert"
+                            className="rounded-2xl border border-[#EAE7DF] bg-white p-5 text-sm leading-6 text-[#85877D] dark:border-white/10 dark:bg-white/5"
+                        >
+                            {props.loadError}
+                        </section>
+                    </div>
+                </main>
+            </>
+        );
+    }
+
+    const { stats, popularProducts, salesByDay } = props;
     const cards = [
         [
             'Penjualan hari ini',

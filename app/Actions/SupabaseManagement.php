@@ -4,15 +4,113 @@ namespace App\Actions;
 
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use RuntimeException;
+use UnexpectedValueException;
 
 class SupabaseManagement
 {
+    private const PAGE_SIZE = 1000;
+
     public function configured(): bool
     {
         return filled(config('services.supabase.url')) && filled(config('services.supabase.secret_key'));
+    }
+
+    /**
+     * @return array{
+     *     stats: array{salesToday: int, ordersToday: int, products: int, students: int, staff: int, processing: int},
+     *     popularProducts: array<int, array{id: string, name: string, sold_count: int, stock: int}>,
+     *     salesByDay: array<int, array{label: string, total: int}>
+     * }
+     */
+    public function adminDashboard(): array
+    {
+        $today = now()->startOfDay();
+        $tomorrow = $today->copy()->addDay();
+        $weekStart = $today->copy()->subDays(6);
+
+        $orders = $this->getRows('orders', [
+            'select' => 'total,status,created_at',
+            'created_at' => 'gte.'.$weekStart->toIso8601String(),
+            'order' => 'created_at.asc,id.asc',
+        ]);
+        $dailySales = array_fill_keys(
+            array_map(
+                fn (int $daysAgo): string => $today->copy()->subDays($daysAgo)->toDateString(),
+                range(6, 0),
+            ),
+            0,
+        );
+        $ordersToday = 0;
+
+        foreach ($orders as $order) {
+            if (
+                ! is_string($order['created_at'] ?? null)
+                || ! is_string($order['status'] ?? null)
+                || ! is_numeric($order['total'] ?? null)
+            ) {
+                throw new UnexpectedValueException('Supabase returned an invalid order for the admin dashboard.');
+            }
+
+            $createdAt = Carbon::parse($order['created_at']);
+
+            if ($createdAt->greaterThanOrEqualTo($today) && $createdAt->lessThan($tomorrow)) {
+                $ordersToday++;
+            }
+
+            $date = $createdAt->toDateString();
+
+            if ($order['status'] === 'completed' && array_key_exists($date, $dailySales)) {
+                $dailySales[$date] += (int) $order['total'];
+            }
+        }
+
+        $popularProducts = $this->getRows('products', [
+            'select' => 'id,name,sold_count,stock',
+            'order' => 'sold_count.desc,id.asc',
+            'limit' => 5,
+        ]);
+        $popularProducts = array_map(static function (array $product): array {
+            if (
+                ! is_string($product['id'] ?? null)
+                || ! is_string($product['name'] ?? null)
+                || ! is_numeric($product['sold_count'] ?? null)
+                || ! is_numeric($product['stock'] ?? null)
+            ) {
+                throw new UnexpectedValueException('Supabase returned an invalid product for the admin dashboard.');
+            }
+
+            return [
+                'id' => $product['id'],
+                'name' => $product['name'],
+                'sold_count' => (int) $product['sold_count'],
+                'stock' => (int) $product['stock'],
+            ];
+        }, $popularProducts);
+
+        return [
+            'stats' => [
+                'salesToday' => $dailySales[$today->toDateString()],
+                'ordersToday' => $ordersToday,
+                'products' => $this->countRows('products'),
+                'students' => $this->countRows('profiles', ['role' => 'eq.student']),
+                'staff' => $this->countRows('profiles', ['role' => 'eq.staff']),
+                'processing' => $this->countRows('orders', [
+                    'status' => 'in.(accepted,preparing,ready_for_delivery,delivering)',
+                ]),
+            ],
+            'popularProducts' => $popularProducts,
+            'salesByDay' => array_map(
+                fn (string $date): array => [
+                    'label' => Carbon::parse($date)->locale('id')->isoFormat('dd'),
+                    'total' => $dailySales[$date],
+                ],
+                array_keys($dailySales),
+            ),
+        ];
     }
 
     /** @return array{categories: array<int, array<string, mixed>>, products: array<int, array<string, mixed>>} */
@@ -174,6 +272,65 @@ class SupabaseManagement
     private function storageEndpoint(string $bucket, string $path): string
     {
         return '/storage/v1/object/'.$bucket.'/'.implode('/', array_map('rawurlencode', explode('/', $path)));
+    }
+
+    /**
+     * @param  array<string, string>  $query
+     * @return array<int, array<string, mixed>>
+     */
+    private function getRows(string $table, array $query): array
+    {
+        $rows = [];
+        $offset = 0;
+
+        do {
+            $response = $this->request()
+                ->withHeaders([
+                    'Range' => $offset.'-'.($offset + self::PAGE_SIZE - 1),
+                    'Range-Unit' => 'items',
+                ])
+                ->get($this->endpoint($table), $query);
+            $page = $response->throw()->json();
+
+            if (! is_array($page) || ! array_is_list($page)) {
+                throw new UnexpectedValueException("Supabase returned an invalid list for [{$table}].");
+            }
+
+            foreach ($page as $row) {
+                if (! is_array($row)) {
+                    throw new UnexpectedValueException("Supabase returned an invalid row for [{$table}].");
+                }
+
+                $rows[] = $row;
+            }
+
+            $pageSize = count($page);
+            $offset += self::PAGE_SIZE;
+        } while ($pageSize === self::PAGE_SIZE);
+
+        return $rows;
+    }
+
+    /**
+     * @param  array<string, string>  $filters
+     */
+    private function countRows(string $table, array $filters = []): int
+    {
+        $response = $this->request()
+            ->withHeaders([
+                'Prefer' => 'count=exact',
+                'Range' => '0-0',
+                'Range-Unit' => 'items',
+            ])
+            ->get($this->endpoint($table), ['select' => 'id', ...$filters]);
+        $response->throw();
+        $contentRange = $response->header('Content-Range');
+
+        if (preg_match('/\/(\d+)$/', $contentRange, $matches) !== 1) {
+            throw new UnexpectedValueException("Supabase did not return an exact count for [{$table}].");
+        }
+
+        return (int) $matches[1];
     }
 
     private function ensureConfigured(): void
