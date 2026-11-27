@@ -9,6 +9,15 @@ test('login screen can be rendered', function () {
     $response->assertOk();
 });
 
+test('login screen uses HTTPS assets behind an HTTPS proxy', function () {
+    $response = $this->get(route('login'), [
+        'X-Forwarded-Proto' => 'https',
+    ]);
+
+    $response->assertOk();
+    $response->assertSee('https://localhost:8000/build/', escape: false);
+});
+
 test('users can authenticate using the login screen', function () {
     $user = User::factory()->create();
 
